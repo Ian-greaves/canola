@@ -1,0 +1,22 @@
+---
+title: "Metadata"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+getwd()
+```
+
+```{r}
+Metadata <- read_delim(file="C:/Users/gre486/DATASCHOOL/challenge/canola/doc/Metadata.txt", delim = ":", col_names=F)
+Metadata$Machine <- paste(Metadata$X1,Metadata$X2,sep=":")
+Metadata <- Metadata[,c(8:9,3:7)]
+colnames(Metadata) <- cbind("FILE","MACHINE","FLOWCELL","LANE","READ","FILTERED","INDEX")
+Metadata
+write_csv(Metadata,path="C:/Users/gre486/DATASCHOOL/challenge/canola/doc/Metadata_seq.csv")
+```
