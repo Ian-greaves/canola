@@ -1,0 +1,92 @@
+---
+title: "metadata_Alignment"
+author: "Ian Greaves"
+date: "12 September 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(purrr)
+```
+
+Input metadata with Alignment information.   These files are from *.final.out from the STAR aligner.  Files were first modified in bash using the below code:
+
+```
+for file in *final.out; do
+sample=${file%%.*}
+cat $file | grep -vE '(%$|:$)' | sed "s/ |//g" | sed "s/^ *//g" | sed '/^\s*$/d'> $sample.txt
+done
+```
+Inputted data output of STAR.  Removed white space from the parameters which influenced downstream applications
+```{r}
+data <- map_dfc(list.files(path="x:/2018_dataschool/Alignment/default/", pattern="Log.txt", full.names = TRUE), read_tsv, col_names = FALSE)
+
+data <-data[, c(1,seq(2, ncol(data), by = 2))]
+
+samples<-as_vector(list.files(path="x:/2018_dataschool/Alignment/default/", pattern="Log.txt"))
+
+samples<-c("parameters",samples)
+colnames(data)<-samples
+data$parameters <- gsub('\\s+', '_', data$parameters)
+data
+```
+
+I need to change rows and columns to make the data tidy.  I also want to add genotype and replicate in so I can do some grouping in ggplot
+```{r}
+tidy_data <-data %>% gather(Samples, numbers, GarRepALog.txt:WxSRepCLog.txt) %>% spread(parameters, numbers)
+tidy_data
+  
+tidy_data$genotype <-gsub( "^(.+)Rep.*" , "\\1" , tidy_data$Samples )
+tidy_data$replicates <-gsub( "^.+(Rep.).*", "\\1", tidy_data$Samples)
+tidy_data
+```
+Plot total reads versus uniquely mapped to see if there is nay difference between genotypes
+```{r}
+ggplot(data = tidy_data,
+       aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number), colour = genotype, shape = replicates)) +
+  geom_point(size = 4) +
+  labs(
+    x = "Total reads",
+    y = "Unique reads",
+    title = "Figure 1 - Total versus Uniquely mapped reads",
+    colour = "genotype"
+  ) +
+  theme(
+    panel.grid=element_blank(),
+    axis.text.x = element_text(angle=90),
+    panel.background = element_rect(fill = "white",
+                                    colour = "black")
+    )
+```
+PLay around with scale
+```{r}
+ggplot(data = tidy_data,
+       aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number), colour = genotype, shape = replicates)) +
+  geom_point(size=4) +
+  facet_wrap(~genotype)+
+    labs(
+    x = "Total reads",
+    y = "Unique reads",
+    title = "Figure 1 - Total versus Uniquely mapped reads",
+    colour = "genotype"
+  ) +
+    theme(
+    panel.grid=element_blank(),
+    axis.text.x = element_text(angle=90),
+    panel.background = element_rect(fill = "white",
+                                    colour = "black")
+    )
+```
+##CONCLUSION
+No obvious difference in mapping quality between the different genotypes or replicates
+
+
+
+
+
+

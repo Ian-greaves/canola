@@ -2,6 +2,10 @@
 
 #sftp -P 1046 gre486@upload.data.csiro.au:/37734/34860v001/data/
 
+#sftp -P 22 gre486@pearcey-login.hpc.csiro.au:/flush1/gre486/Canola_data
+
+#sftp -P 22 gre486$osm-13-cdc.it.csiro.au:OSM/CBR/AF_HETEROSIS/work/2018_dataschool/data/
+
 #put /OSM/CBR/AF_HETEROSIS/work/Anyu/C_21_*.fq.gz
 
 
