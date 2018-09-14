@@ -14,6 +14,62 @@ library(tidyverse)
 library(purrr)
 ```
 
+## Alignment
+
+### Index
+Made index of the Canola genome using:
+```
+LOGDIR=/flush1/gre486/Canola_data/log
+INPDIR=/flush1/gre486/Canola_data/raw
+REFDIR=/flush1/gre486/Canola_data/reference_genome
+ANODIR=/flush1/gre486/Canola_data/annotation
+OUTDIR=/flush1/gre486/Canola_data/processed
+
+STAR \
+--runMode genomeGenerate \
+--genomeDir ${REFDIR}/ \
+--genomeFastaFiles ${REFDIR}/Brassica_napus_v4.1.chromosomes.fa \
+--sjdbGTFfile ${ANODIR}/Brassica_napus.annotation_v5_exon.gtf \
+--sjdbOverhang 149
+```
+
+### Alignment with STAR
+```
+INPDIR=/flush1/gre486/Canola_data/raw
+REFDIR=/flush1/gre486/Canola_data/reference_genome
+ANODIR=/flush1/gre486/Canola_data/annotation
+OUTDIR=/flush1/gre486/Canola_data/processed/Alignment
+
+
+SAMPLES=( $(cut -d " " -f 1 STARInputList.csv) );
+INFILES_R1=( $(cut -d " " -f 2 STARInputList.csv) );
+INFILES_R2=( $(cut -d " " -f 3 STARInputList.csv) );
+
+
+if [ ! -z "$SLURM_ARRAY_TASK_ID" ]
+then
+    i=$SLURM_ARRAY_TASK_ID
+    STAR \
+	--runThreadN 8 \
+	--genomeDir ${REFDIR}/ \
+	--readFilesCommand zcat \
+	--readFilesIn ${INPDIR}/${INFILES_R1[$i]} ${INPDIR}/${INFILES_R2[$i]} \
+	--outFileNamePrefix ${OUTDIR}/${SAMPLES[$i]} \
+	--outSAMstrandField intronMotif \
+	--outFilterMismatchNmax 10 \
+	--outSAMtype BAM SortedByCoordinate \
+	--quantMode TranscriptomeSAM GeneCounts \
+	--outFilterMultimapNmax 10 \
+	--outSAMattrIHstart 0 \
+	--outSAMmapqUnique 255 \
+	--outSAMmultNmax -1 \
+	--chimSegmentMin 40
+else
+    echo "Error: Missing array index as SLURM_ARRAY_TASK_ID"
+fi
+```
+
+### Preparing metadata data for R
 Input metadata with Alignment information.   These files are from *.final.out from the STAR aligner.  Files were first modified in bash using the below code:
 
 ```
@@ -22,7 +78,9 @@ sample=${file%%.*}
 cat $file | grep -vE '(%$|:$)' | sed "s/ |//g" | sed "s/^ *//g" | sed '/^\s*$/d'> $sample.txt
 done
 ```
-Inputted data output of STAR.  Removed white space from the parameters which influenced downstream applications
+
+## R-Analysis of Metadata
+Inputted Metadata Alignment files from STAR.  Removed white space from the parameters which may influence downstream applications
 ```{r}
 data <- map_dfc(list.files(path="x:/2018_dataschool/Alignment/default/", pattern="Log.txt", full.names = TRUE), read_tsv, col_names = FALSE)
 
@@ -33,10 +91,28 @@ samples<-as_vector(list.files(path="x:/2018_dataschool/Alignment/default/", patt
 samples<-c("parameters",samples)
 colnames(data)<-samples
 data$parameters <- gsub('\\s+', '_', data$parameters)
+lanes <- c()
 data
 ```
 
-I need to change rows and columns to make the data tidy.  I also want to add genotype and replicate in so I can do some grouping in ggplot
+Inputed metadata_seq file so I can tell which samples were run in which lane
+```{r}
+lanes <- read_csv(file = "C:/Users/gre486/DATASCHOOL/challenge/canola/doc/Metadata_seq.csv")
+lanes
+```
+
+Inputed STARInputList.csv which enables me to link sample name with original file in Metadata_seq.csv.  Combine both to line machine, flowcell and lane to smaple name.  I'll use this information once I have produced a tidy dataframe from my alignment output
+```{r}
+sampleNames <- read_delim(file = "C:/Users/gre486/DATASCHOOL/challenge/canola/doc/STARInputList.csv", delim = ' ', col_names = FALSE)
+sampleNames
+sample_lanes<- na.omit(inner_join(lanes, sampleNames, by = c("FILE" = "X2")))
+sample_lanes$Samples <- paste(sample_lanes$X1,"Log.txt", sep = "")
+sample_lanes <- sample_lanes[,c(10,2:4)]
+sample_lanes
+```
+ 
+
+I need to change rows and columns to make the data tidy from the alignment output.  I also want to add genotype and replicate in so I can do some grouping in ggplot
 ```{r}
 tidy_data <-data %>% gather(Samples, numbers, GarRepALog.txt:WxSRepCLog.txt) %>% spread(parameters, numbers)
 tidy_data
@@ -45,15 +121,42 @@ tidy_data$genotype <-gsub( "^(.+)Rep.*" , "\\1" , tidy_data$Samples )
 tidy_data$replicates <-gsub( "^.+(Rep.).*", "\\1", tidy_data$Samples)
 tidy_data
 ```
-Plot total reads versus uniquely mapped to see if there is nay difference between genotypes
+
+I now need to combine metadata from sequencing (Machine,flowcell @ lane) with metadata from alignment
 ```{r}
-ggplot(data = tidy_data,
+final_data <- left_join(tidy_data, sample_lanes, by = "Samples")
+final_data
+```
+
+### - Visualizing Metadata
+Plot total reads versus uniquely mapped reads
+```{r}
+ggplot(data = final_data,
+       aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number))) +
+  geom_point(size = 4) +
+  stat_smooth(method = "lm", size = 1, se = FALSE)+
+  labs(
+    x = "Total reads",
+    y = "Unique reads",
+    title = "Figure 1 - Total versus Uniquely mapped reads"
+    ) +
+  theme(
+    panel.grid=element_blank(),
+    axis.text.x = element_text(angle=90),
+    panel.background = element_rect(fill = "white",
+                                    colour = "black")
+  )
+```   
+
+Plot total reads versus uniquely mapped to see if there is any difference between genotypes
+```{r}
+ggplot(data = final_data,
        aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number), colour = genotype, shape = replicates)) +
   geom_point(size = 4) +
   labs(
     x = "Total reads",
     y = "Unique reads",
-    title = "Figure 1 - Total versus Uniquely mapped reads",
+    title = "Figure 2 - Total versus Uniquely mapped reads - Genotypes",
     colour = "genotype"
   ) +
   theme(
@@ -63,16 +166,17 @@ ggplot(data = tidy_data,
                                     colour = "black")
     )
 ```
-PLay around with scale
+
+Split via genotype
 ```{r}
-ggplot(data = tidy_data,
+ggplot(data = final_data,
        aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number), colour = genotype, shape = replicates)) +
-  geom_point(size=4) +
-  facet_wrap(~genotype)+
+    geom_point(size=4) +
+    facet_wrap(~genotype)+
     labs(
     x = "Total reads",
     y = "Unique reads",
-    title = "Figure 1 - Total versus Uniquely mapped reads",
+    title = "Figure 3 - Total versus Uniquely mapped reads by genotype(separated)",
     colour = "genotype"
   ) +
     theme(
@@ -82,11 +186,78 @@ ggplot(data = tidy_data,
                                     colour = "black")
     )
 ```
-##CONCLUSION
+
+**CONCLUSION**
 No obvious difference in mapping quality between the different genotypes or replicates
 
 
+###Samples were run on different lanes and machines
+Ceck if downstream analyses could be affected by sequencing on different machines or lanes
+```{r}
+final_data %>%
+  count(MACHINE,LANE)
+```
+Does lane or machine impact the mapping? 
+```{r}
+ggplot(data = final_data,
+       aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number), colour = MACHINE)) +
+  geom_point(size=4) +
+    stat_smooth(method = "lm", formula = y ~ x, size = 1, se = FALSE)+
+    labs(
+    x = "Total reads",
+    y = "Unique reads",
+    title = "Figure 4 - Total versus Uniquely mapped reads - Machine differences",
+    colour = "Machine"
+  ) +
+    theme(
+    panel.grid=element_blank(),
+    axis.text.x = element_text(angle=90),
+    panel.background = element_rect(fill = "white",
+                                    colour = "black")
+    )
 
+```
 
+Split Lanes by Machine
+```{r}
+ggplot(data = final_data,
+       aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number), colour = as.factor(LANE), shape = MACHINE)) +
+  geom_point(size=4) +
+  facet_wrap(~MACHINE)+
+  stat_smooth(method = "lm", size = 1, se = FALSE, fullrange=TRUE)+
+    labs(
+    x = "Total reads",
+    y = "Unique reads",
+    title = "Figure 5 - Total versus Uniquely mapped reads - LANE differences per machine",
+    colour = "Lane"
+  ) +
+    theme(
+    panel.grid=element_blank(),
+    axis.text.x = element_text(angle=90),
+    panel.background = element_rect(fill = "white",
+                                    colour = "black")
+    )
+```
 
+Are particular genotypes spread over different machines and or lanes?
+```{r}
+ggplot(data = final_data,
+       aes(x = as.numeric(Number_of_input_reads), y = as.numeric(Uniquely_mapped_reads_number), colour = as.factor(LANE), shape = MACHINE)) +
+  geom_point(size=4) +
+  facet_wrap(~genotype)+
+    labs(
+    x = "Total reads",
+    y = "Unique reads",
+    title = "Figure 6 - Total versus Uniquely mapped reads - Genotype on different lanes",
+    colour = "Lane"
+  ) +
+    theme(
+    panel.grid=element_blank(),
+    axis.text.x = element_text(angle=90),
+    panel.background = element_rect(fill = "white",
+                                    colour = "black")
+    )
+```
 
+**CONCLUSION**
+Can't find any obvious patterns which may influence downstream gene expression analyses
